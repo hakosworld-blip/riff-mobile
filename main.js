@@ -21,6 +21,8 @@ process.on('unhandledRejection', (reason) => {
   } catch (_) {}
 });
 
+const MOBILE_SHELL = process.argv.includes('--mobile');
+
 const enabledFeatures = [];
 if (process.platform === 'linux') {
   enabledFeatures.push('WaylandWindowDecorations', 'UseOzonePlatform', 'WaylandFractionalScaleV1', 'MediaSessionService', 'HardwareMediaKeyHandling');
@@ -190,7 +192,7 @@ function runGUI() {
 
   async function createWindow() {
     serverPort = await startServer(PORT);
-    const firstRun = !tutorialDone();
+    const firstRun = !MOBILE_SHELL && !tutorialDone();
     const initialBounds = getResponsiveWindowBounds();
     const savedState = readWindowState();
 
@@ -201,14 +203,14 @@ function runGUI() {
     mainWindow = new BrowserWindow({
       x: initialBounds.x,
       y: initialBounds.y,
-      width: initialBounds.width,
-      height: initialBounds.height,
+      width: MOBILE_SHELL ? 430 : initialBounds.width,
+      height: MOBILE_SHELL ? 900 : initialBounds.height,
       minWidth: 360,
                                    minHeight: 500,
                                    backgroundColor: firstRun ? '#8d5ef2' : '#000000',
-                                   title: 'Riff',
+                                   title: MOBILE_SHELL ? 'Riff Mobile' : 'Riff',
                                    icon: path.join(__dirname, 'assets', 'icon.png'),
-                                   frame: false,
+                                   frame: MOBILE_SHELL,
                                    titleBarStyle: 'hidden',
                                    show: false,
                                    useContentSize: true,
@@ -223,7 +225,9 @@ function runGUI() {
                                    }
     });
 
-    if (savedState?.isMaximized) {
+    if (MOBILE_SHELL) {
+      try { mainWindow.center(); } catch (e) {}
+    } else if (savedState?.isMaximized) {
       mainWindow.maximize();
     }
 
@@ -232,7 +236,7 @@ function runGUI() {
       mainWindow.show();
     });
 
-    mainWindow.loadFile(path.join(__dirname, firstRun ? 'welcome.html' : 'index.html'));
+    mainWindow.loadFile(path.join(__dirname, firstRun ? 'welcome.html' : (MOBILE_SHELL ? 'mobile/index.html' : 'index.html')));
     if (firstRun) {
       ipcMain.removeAllListeners('welcome-finish');
       ipcMain.once('welcome-finish', (e, detail) => {

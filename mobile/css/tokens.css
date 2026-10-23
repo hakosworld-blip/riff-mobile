@@ -1,0 +1,142 @@
+/* Riff Mobile — Material 3 design tokens.
+   The color scheme is regenerated at runtime from album art (core.js + app.js).
+   These defaults keep the UI coherent before/without dynamic color. */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- Color: baseline dark scheme ---- */
+  --md-sys-color-primary: #d0bcff;
+  --md-sys-color-on-primary: #381e72;
+  --md-sys-color-primary-container: #4f378b;
+  --md-sys-color-on-primary-container: #eadcff;
+  --md-sys-color-secondary: #ccc2dc;
+  --md-sys-color-on-secondary: #332d41;
+  --md-sys-color-secondary-container: #4a4458;
+  --md-sys-color-on-secondary-container: #e8def8;
+  --md-sys-color-tertiary: #efb8c8;
+  --md-sys-color-on-tertiary: #492532;
+  --md-sys-color-tertiary-container: #633b48;
+  --md-sys-color-on-tertiary-container: #ffd8e4;
+  --md-sys-color-error: #ffb4ab;
+  --md-sys-color-on-error: #690005;
+  --md-sys-color-error-container: #93000a;
+  --md-sys-color-on-error-container: #ffdad6;
+
+  --md-sys-color-background: #131018;
+  --md-sys-color-on-background: #e8e1e9;
+  --md-sys-color-surface: #131018;
+  --md-sys-color-on-surface: #e8e1e9;
+  --md-sys-color-surface-variant: #49454f;
+  --md-sys-color-on-surface-variant: #cac4d0;
+  --md-sys-color-surface-dim: #131018;
+  --md-sys-color-surface-bright: #3a363f;
+  --md-sys-color-surface-container-lowest: #0d0b11;
+  --md-sys-color-surface-container-low: #1b181f;
+  --md-sys-color-surface-container: #1f1c23;
+  --md-sys-color-surface-container-high: #2a262e;
+  --md-sys-color-surface-container-highest: #35313a;
+  --md-sys-color-outline: #938f99;
+  --md-sys-color-outline-variant: #49454f;
+  --md-sys-color-inverse-surface: #e8e1e9;
+  --md-sys-color-inverse-on-surface: #322f36;
+  --md-sys-color-inverse-primary: #6750a4;
+  --md-sys-color-scrim: #000000;
+  --md-sys-color-shadow: #000000;
+
+  /* ---- Shape ---- */
+  --md-shape-xs: 4px;
+  --md-shape-s: 8px;
+  --md-shape-m: 12px;
+  --md-shape-l: 16px;
+  --md-shape-xl: 28px;
+  --md-shape-full: 999px;
+
+  /* ---- Typescale ---- */
+  --md-font: "Google Sans", "Google Sans Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --md-type-display-s: 600 36px/44px var(--md-font);
+  --md-type-headline-s: 600 24px/32px var(--md-font);
+  --md-type-headline-xs: 600 20px/28px var(--md-font);
+  --md-type-title-l: 600 20px/28px var(--md-font);
+  --md-type-title-m: 600 16px/24px var(--md-font);
+  --md-type-title-s: 600 14px/20px var(--md-font);
+  --md-type-body-l: 400 16px/24px var(--md-font);
+  --md-type-body-m: 400 14px/20px var(--md-font);
+  --md-type-body-s: 400 12px/16px var(--md-font);
+  --md-type-label-l: 600 14px/20px var(--md-font);
+  --md-type-label-m: 600 12px/16px var(--md-font);
+  --md-type-label-s: 500 11px/16px var(--md-font);
+
+  /* ---- Motion ---- */
+  --md-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --md-dur-short: 160ms;
+  --md-dur-medium: 260ms;
+  --md-dur-long: 420ms;
+
+  /* ---- Elevation ---- */
+  --md-elevation-1: 0 1px 2px rgba(0, 0, 0, .32), 0 1px 3px 1px rgba(0, 0, 0, .16);
+  --md-elevation-2: 0 1px 2px rgba(0, 0, 0, .34), 0 2px 6px 2px rgba(0, 0, 0, .18);
+  --md-elevation-3: 0 4px 8px 3px rgba(0, 0, 0, .18), 0 1px 3px rgba(0, 0, 0, .34);
+
+  /* ---- Layout ---- */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-bar-height: 80px;
+  --mini-player-height: 64px;
+  --page-gutter: 16px;
+  --bottom-inset: calc(var(--nav-bar-height) + var(--safe-bottom) + 8px);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --md-sys-color-primary: #6750a4;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #eaddff;
+  --md-sys-color-on-primary-container: #21005d;
+  --md-sys-color-secondary: #625b71;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #e8def8;
+  --md-sys-color-on-secondary-container: #1d192b;
+  --md-sys-color-tertiary: #7d5260;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #ffd8e4;
+  --md-sys-color-on-tertiary-container: #31111d;
+  --md-sys-color-error: #b3261e;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-error-container: #f9dedc;
+  --md-sys-color-on-error-container: #410e0b;
+
+  --md-sys-color-background: #fef7ff;
+  --md-sys-color-on-background: #1d1b20;
+  --md-sys-color-surface: #fef7ff;
+  --md-sys-color-on-surface: #1d1b20;
+  --md-sys-color-surface-variant: #e7e0ec;
+  --md-sys-color-on-surface-variant: #49454f;
+  --md-sys-color-surface-dim: #ded8e1;
+  --md-sys-color-surface-bright: #fef7ff;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f7f2fa;
+  --md-sys-color-surface-container: #f3edf7;
+  --md-sys-color-surface-container-high: #ece6f0;
+  --md-sys-color-surface-container-highest: #e6e0e9;
+  --md-sys-color-outline: #79747e;
+  --md-sys-color-outline-variant: #cac4d0;
+  --md-sys-color-inverse-surface: #322f35;
+  --md-sys-color-inverse-on-surface: #f5eff7;
+  --md-sys-color-inverse-primary: #d0bcff;
+
+  --md-elevation-1: 0 1px 2px rgba(0, 0, 0, .12), 0 1px 3px 1px rgba(0, 0, 0, .08);
+  --md-elevation-2: 0 1px 2px rgba(0, 0, 0, .14), 0 2px 6px 2px rgba(0, 0, 0, .09);
+  --md-elevation-3: 0 4px 8px 3px rgba(0, 0, 0, .09), 0 1px 3px rgba(0, 0, 0, .14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --md-dur-short: 1ms;
+    --md-dur-medium: 1ms;
+    --md-dur-long: 1ms;
+  }
+}

@@ -12,3 +12,19 @@ bin/ffprobe.exe
 dev-app-update.yml
 plugins/lastfm-scrobbler.js
 test/lastfm-scrobbler.test.js
+
+# Capacitor native build artifacts
+mobile/.web/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+ios/App/Pods/
+ios/App/DerivedData/
+ios/App/App/public/
+ios/App/App.xcworkspace/xcuserdata/
+
+# Android release signing (local secrets — never commit)
+android/keystore/
+android/keystore.properties
+artifacts/*.apk

@@ -1,0 +1,26 @@
+{
+  "name": "Riff",
+  "short_name": "Riff",
+  "description": "A Material 3 music player for YouTube Music, YouTube, SoundCloud and your local library.",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#131018",
+  "theme_color": "#131018",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    {
+      "src": "icons/riff.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

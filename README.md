@@ -165,11 +165,29 @@ Riff (single Electron renderer and server process) typically utilizes approximat
 
 ### Memory usage is only classified as a leak when sustained footprint exceeds 600 MB.
 
-## Mobile versions
+## Riff Mobile
 
-There is no official Riff client for Android or iOS. Third-party community forks are documented below:
-### https://rootless.shit.vc/fork
-Additional mobile implementations may be reviewed in future releases.
+Riff includes a dedicated mobile client with its own Material 3 interface — a touch-first layout built around a bottom navigation bar, a docked mini player and a full-screen player, sharing the same engine and local API as the desktop app.
+
+- **Run it in a phone-sized window:** `npm run mobile`
+- **Open it in a browser while Riff is running:** `http://127.0.0.1:38472/mobile` (installable as a standalone app)
+- **Preview the interface without a backend:** `npm run mobile:dev` (demo catalogue)
+- **Build the native apps:** `npm run mobile:sync`, then `npm run mobile:android` or `npm run mobile:ios`
+
+The Android and iOS apps are a Capacitor wrapper around the same client. They
+pair once with Riff over the local network: start Riff with LAN sharing
+(`npm start -- --lan`, or `npm run mobile:lan`), open
+`http://127.0.0.1:38472/pair` on the computer, and enter the address and pairing
+code in the app. LAN sharing is opt-in, restricted to private network hosts, and
+every remote API call requires the pairing token. Until the code is entered the
+app offers demo mode; the pairing screen can be reopened from Settings. The
+native builds also keep playing in the background and expose lock-screen,
+Control Center and Android notification controls through a native media
+session, while the EQ/DSP engine continues to run in the app.
+
+The mobile client covers search across YouTube Music, YouTube and SoundCloud, albums and artist pages, streaming playback with queue/shuffle/repeat, the local library, offline downloads, playlist management and import, favorites and history, synchronized lyrics with tap-to-seek and translation, the 10-band equalizer, DSP effects, dynamic color, sleep timer and media-key/lock-screen controls. Desktop-only integrations — Discord Rich Presence, plugins, the theme/CSS editor, auto-updates and the waveform editor — remain in the desktop app.
+
+See [mobile/README.md](mobile/README.md) for the architecture, Material 3 details and the full feature table. Third-party community forks that predate this client remain at https://rootless.shit.vc/fork.
 
 ## FAQ
 
@@ -201,7 +219,7 @@ Yes. Riff supports online synchronized lyrics, local LRC files, manual timing ad
 Yes. Native Discord Rich Presence displays the currently playing track title, artist, elapsed time, and platform indicator.
 
 **Are there official mobile builds?**
-No official mobile releases exist. See [Mobile versions](#mobile-versions) for community-maintained forks.
+Yes — Riff Mobile ships with the project. Run `npm run mobile` for a phone-sized window, or open `http://127.0.0.1:38472/mobile` in a browser while Riff is running. See [Riff Mobile](#riff-mobile).
 
 ## Contributing
 

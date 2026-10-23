@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f0d13">
+  <meta name="description" content="Riff Mobile — a Material 3 music player for YouTube Music, YouTube, SoundCloud and your local library.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Riff</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Google+Sans+Text:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="icons/riff.svg">
+  <link rel="apple-touch-icon" href="icons/riff.svg">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <div class="ambient" id="ambient" aria-hidden="true">
+      <span class="ambient-blob ambient-blob--a"></span>
+      <span class="ambient-blob ambient-blob--b"></span>
+    </div>
+
+    <main class="screen-host" id="screen-host" role="main"></main>
+
+    <div class="bottom-stack" id="bottom-stack">
+      <div class="mini-player" id="mini-player" hidden>
+        <button class="mini-player__surface" id="mini-open" type="button" aria-label="Open player">
+          <span class="mini-player__art" id="mini-art"></span>
+          <span class="mini-player__text">
+            <span class="mini-player__title" id="mini-title">Nothing playing</span>
+            <span class="mini-player__artist" id="mini-artist">Pick a track to start</span>
+          </span>
+        </button>
+        <div class="mini-player__actions">
+          <button class="icon-btn icon-btn--small" id="mini-play" type="button" aria-label="Play or pause"></button>
+          <button class="icon-btn icon-btn--small" id="mini-next" type="button" aria-label="Next track"></button>
+        </div>
+        <div class="mini-player__progress" aria-hidden="true"><span id="mini-progress-fill"></span></div>
+      </div>
+
+      <nav class="nav-bar" id="nav-bar" aria-label="Main">
+        <button class="nav-item is-active" type="button" data-route="home" aria-current="page">
+          <span class="nav-item__indicator"><i class="i" data-icon="home"></i></span>
+          <span class="nav-item__label">Home</span>
+        </button>
+        <button class="nav-item" type="button" data-route="search">
+          <span class="nav-item__indicator"><i class="i" data-icon="search"></i></span>
+          <span class="nav-item__label">Search</span>
+        </button>
+        <button class="nav-item" type="button" data-route="library">
+          <span class="nav-item__indicator"><i class="i" data-icon="library"></i></span>
+          <span class="nav-item__label">Library</span>
+        </button>
+        <button class="nav-item" type="button" data-route="settings">
+          <span class="nav-item__indicator"><i class="i" data-icon="tune"></i></span>
+          <span class="nav-item__label">Settings</span>
+        </button>
+      </nav>
+    </div>
+  </div>
+
+  <div class="overlay-root" id="overlay-root"></div>
+  <div class="snackbar-host" id="snackbar-host" role="status" aria-live="polite"></div>
+
+  <audio id="riff-audio" preload="metadata"></audio>
+
+  <noscript><p style="padding:24px;color:#fff">Riff Mobile needs JavaScript enabled.</p></noscript>
+
+  <script src="../audio-engine.js"></script>
+  <script src="../assets/hls.min.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/demo.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/background.js"></script>
+  <script src="js/views/common.js"></script>
+  <script src="js/views/home.js"></script>
+  <script src="js/views/search.js"></script>
+  <script src="js/views/library.js"></script>
+  <script src="js/views/collection.js"></script>
+  <script src="js/views/player-view.js"></script>
+  <script src="js/views/settings.js"></script>
+  <script src="js/views/connect.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -10,7 +10,7 @@ const dns = require('dns');
 const net = require('net');
 
 const PORT = 38472;
-const { DATA_DIR, CACHE_DIR, CUSTOM_LYRICS_DIR, LYRICS_DIR, THUMBNAILS_DIR, METADATA_PATH, LIBRARY_DIR, LIBRARY_PATH, ytDlpCommand, resolveDownloadDir, resolveBinary } = require('./platform');
+const { DATA_DIR, CACHE_DIR, CUSTOM_LYRICS_DIR, LYRICS_DIR, THUMBNAILS_DIR, METADATA_PATH, LIBRARY_DIR, LIBRARY_PATH, CONFIG_PATH, ytDlpCommand, resolveDownloadDir, resolveBinary } = require('./platform');
 const logger = require('./logger');
 const { getSystemAudioOutputInfo } = require('./audio-output');
 
@@ -2847,7 +2847,30 @@ function fetchLyricsDirect(title, artist) {
 
 const crypto = require('crypto');
 
-const SERVER_TOKEN = crypto.randomBytes(24).toString('hex');
+// LAN sharing is opt-in: the server keeps listening on loopback otherwise.
+const LAN_ENABLED = process.env.RIFF_LAN === '1' || process.argv.indexOf('--lan') !== -1;
+const PAIRING_FILE = path.join(path.dirname(CONFIG_PATH), 'mobile-pairing.json');
+
+/* The pairing code is a bearer credential for phones. It is persisted so a
+   paired device survives desktop restarts, and created with owner-only
+   permissions. Delete the file to revoke every paired device. */
+function loadOrCreateServerToken() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(PAIRING_FILE, 'utf8'));
+    if (saved && typeof saved.token === 'string' && /^[a-f0-9]{48}$/i.test(saved.token)) {
+      return saved.token.toLowerCase();
+    }
+  } catch (e) {}
+  const next = crypto.randomBytes(24).toString('hex');
+  try {
+    fs.mkdirSync(path.dirname(PAIRING_FILE), { recursive: true });
+    fs.writeFileSync(PAIRING_FILE, JSON.stringify({ token: next, createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(PAIRING_FILE, 0o600); } catch (e) {}
+  } catch (e) {}
+  return next;
+}
+
+const SERVER_TOKEN = loadOrCreateServerToken();
 
 const TOKEN_PROTECTED_ROUTES = new Set([
   '/api/state',
@@ -2893,6 +2916,63 @@ function tokenMatches(provided) {
   } catch (e) {
     return false;
   }
+}
+
+function stripHost(hostHeader) {
+  return String(hostHeader || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+}
+
+function isLoopbackHost(hostname) {
+  const name = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  return name === 'localhost' || name === '::1' || name === '127.0.0.1' || /^127\./.test(name) || name === '';
+}
+
+/* A phone on the same Wi-Fi reaches the computer by a private LAN address
+   (192.168.x.x, 10.x.x.x, *.local, or an IPv6 ULA). Nothing public is allowed. */
+function isLocalNetworkHost(hostname) {
+  const name = stripHost(hostname).replace(/\.$/, '');
+  if (!name || isLoopbackHost(name)) return true;
+  if (name === 'localhost.localdomain' || name.endsWith('.local')) return true;
+  if (name === '::' || /^f[cd][0-9a-f]{2}:/.test(name) || /^fe80:/.test(name)) return true;
+  if (net.isIP(name)) return isPrivateIp(name);
+  return false;
+}
+
+function isAllowedRequestHost(hostname) {
+  return LAN_ENABLED ? isLocalNetworkHost(hostname) : isLoopbackHost(hostname);
+}
+
+function isAllowedOrigin(origin) {
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch (e) {
+    return false;
+  }
+  if (parsed.protocol === 'file:') return true;
+  if (parsed.protocol === 'capacitor:' || parsed.protocol === 'ionic:') return parsed.hostname === 'localhost';
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  return isAllowedRequestHost(parsed.hostname);
+}
+
+function requestToken(req, parsedUrl) {
+  const header = req.headers['x-riff-token'];
+  if (typeof header === 'string' && header.trim()) return header.trim();
+  const query = parsedUrl && parsedUrl.query ? parsedUrl.query.token : null;
+  return typeof query === 'string' ? query.trim() : '';
+}
+
+function lanAddresses(port) {
+  const found = [];
+  const interfaces = os.networkInterfaces();
+  Object.keys(interfaces).forEach((name) => {
+    (interfaces[name] || []).forEach((entry) => {
+      if (!entry || entry.internal) return;
+      if (entry.family !== 'IPv4' && entry.family !== 4) return;
+      found.push({ name: name, address: 'http://' + entry.address + ':' + port });
+    });
+  });
+  return found;
 }
 
 function legacyCustomLyricsPath(title, artist) {
@@ -4473,40 +4553,173 @@ async function handleHotPicks(req, res, parsedUrl) {
   }
 }
 
-const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+const MOBILE_DIR = path.join(__dirname, 'mobile');
 
-  const requestOrigin = req.headers.origin;
-  if (requestOrigin && requestOrigin !== 'null') {
-    let originAllowed = false;
-    try {
-      const originUrl = new URL(requestOrigin);
-      originAllowed = originUrl.protocol === 'file:' || originUrl.hostname === '127.0.0.1' || originUrl.hostname === 'localhost' || originUrl.hostname === '::1';
-    } catch (e) {
-      originAllowed = false;
+const STATIC_MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2'
+};
+
+function staticMime(filePath) {
+  return STATIC_MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+}
+
+function sendStaticFile(res, filePath, options) {
+  const opts = options || {};
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      if (!res.writableEnded) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Not found');
+      }
+      return;
     }
-    if (!originAllowed) {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: false, error: 'forbidden' }));
+    const headers = { 'Content-Type': staticMime(filePath), 'Cache-Control': opts.cache || 'no-cache' };
+    if (opts.headers) Object.assign(headers, opts.headers);
+    res.writeHead(200, headers);
+    res.end(data);
+  });
+}
+
+function servePairingPage(req, res) {
+  const address = server.address();
+  const bound = address && typeof address === "object" ? address.port : PORT;
+  const { renderPairingPage } = require('./mobile/pairing-page');
+  const html = renderPairingPage({
+    addresses: lanAddresses(bound),
+    token: SERVER_TOKEN,
+    port: bound,
+    lanEnabled: LAN_ENABLED
+  });
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(html);
+}
+
+function serveMobileIndex(res) {
+  fs.readFile(path.join(MOBILE_DIR, 'index.html'), (err, data) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Riff Mobile is not installed');
+      return;
     }
+    // Same-origin boot config. The mobile client only ever runs on this machine.
+    const boot = '<script>window.__RIFF_TOKEN__=' + JSON.stringify(SERVER_TOKEN) + ';window.__RIFF_SERVER__=location.origin;</script>';
+    const html = String(data).replace('<head>', '<head>' + boot);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+    res.end(html);
+  });
+}
+
+function serveMobileAsset(res, relativePath) {
+  let decoded = '';
+  try {
+    decoded = decodeURIComponent(relativePath);
+  } catch (e) {
+    decoded = '';
   }
+  if (!decoded || decoded.includes('\0') || decoded.includes('..')) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Not found');
+  }
+  const target = path.normalize(path.join(MOBILE_DIR, decoded));
+  if (target !== MOBILE_DIR && !target.startsWith(MOBILE_DIR + path.sep)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Forbidden');
+  }
+  fs.stat(target, (err, stat) => {
+    if (err || !stat.isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Not found');
+    }
+    sendStaticFile(res, target, {
+      headers: decoded === 'sw.js' ? { 'Service-Worker-Allowed': '/' } : null
+    });
+  });
+}
 
-  const hostName = (req.headers.host || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
-  if (hostName && hostName !== '127.0.0.1' && hostName !== 'localhost' && hostName !== '::1') {
+const server = http.createServer(async (req, res) => {
+  const parsedUrl = url.parse(req.url, true);
+  const hostName = stripHost(req.headers.host);
+  const loopback = isLoopbackHost(hostName);
+
+  // Host allow-list: loopback only, unless the user opted into LAN sharing.
+  if (hostName && !isAllowedRequestHost(hostName)) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ success: false, error: 'forbidden' }));
   }
+
+  // CORS is echoed for allowed origins only — never a wildcard, because the
+  // pairing page carries a credential.
+  const requestOrigin = req.headers.origin;
+  if (requestOrigin === 'null') {
+    // Chromium sends Origin: null for file:// pages — the desktop renderer.
+    // Only API responses opt in, so /pair cannot be read cross-origin.
+    if (parsedUrl.pathname.indexOf('/api/') === 0) {
+      res.setHeader('Access-Control-Allow-Origin', 'null');
+      res.setHeader('Vary', 'Origin');
+    }
+  } else if (requestOrigin) {
+    if (!isAllowedOrigin(requestOrigin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: 'forbidden' }));
+    }
+    res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Riff-Token');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     return res.end();
   }
 
-  const parsedUrl = url.parse(req.url, true);
+  if (parsedUrl.pathname === '/pair' && (req.method === 'GET' || req.method === 'HEAD')) {
+    // The pairing page reveals the token: loopback only, never over the LAN.
+    if (!loopback) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Open the pairing page on the computer running Riff.');
+    }
+    return servePairingPage(req, res);
+  }
 
-  if (TOKEN_PROTECTED_ROUTES.has(parsedUrl.pathname) && !tokenMatches(req.headers['x-riff-token'])) {
+  // A remote phone must authenticate on every API call. /mobile is the PWA
+  // shell and embeds the token, so it stays loopback-only.
+  if (LAN_ENABLED && !loopback) {
+    if (parsedUrl.pathname === '/mobile' || parsedUrl.pathname === '/mobile/' || parsedUrl.pathname.indexOf('/mobile/') === 0) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Riff Mobile is served on the computer only');
+    }
+    if (parsedUrl.pathname.indexOf('/api/') === 0 && !tokenMatches(requestToken(req, parsedUrl))) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: 'forbidden' }));
+    }
+  }
+
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    if (parsedUrl.pathname === '/mobile' || parsedUrl.pathname === '/mobile/') {
+      return serveMobileIndex(res);
+    }
+    if (parsedUrl.pathname.startsWith('/mobile/')) {
+      return serveMobileAsset(res, parsedUrl.pathname.slice('/mobile/'.length));
+    }
+    if (parsedUrl.pathname === '/audio-engine.js') {
+      return sendStaticFile(res, path.join(__dirname, 'audio-engine.js'));
+    }
+    if (parsedUrl.pathname === '/assets/hls.min.js') {
+      return sendStaticFile(res, path.join(__dirname, 'assets', 'hls.min.js'), { cache: 'public, max-age=86400' });
+    }
+  }
+
+  if (TOKEN_PROTECTED_ROUTES.has(parsedUrl.pathname) && !tokenMatches(requestToken(req, parsedUrl))) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ success: false, error: 'forbidden' }));
   }
@@ -5041,16 +5254,21 @@ function startServer(port = PORT) {
     const address = server.address();
     return Promise.resolve(address && typeof address === 'object' ? address.port : port);
   }
+  const host = LAN_ENABLED ? '0.0.0.0' : '127.0.0.1';
   return new Promise((resolve, reject) => {
-    server.listen(port, '127.0.0.1', () => {
+    server.listen(port, host, () => {
       const address = server.address();
-      const bound = address && typeof address === 'object' ? address.port : port;
+      const bound = address && typeof address === "object" ? address.port : port;
       console.log(`devsize internal server running on http://127.0.0.1:${bound}`);
+      if (LAN_ENABLED) {
+        console.log("Riff LAN sharing is ON — pairing page: http://127.0.0.1:" + bound + "/pair");
+        lanAddresses(bound).forEach((entry) => console.log("  phone: " + entry.address));
+      }
       require('./tools').updateYtDlpIfManaged().catch(() => {});
       resolve(bound);
     }).on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
-        server.listen(0, '127.0.0.1', () => {
+        server.listen(0, host, () => {
           const p = server.address().port;
           console.log(`devsize internal server running on fallback port http://127.0.0.1:${p}`);
           require('./tools').updateYtDlpIfManaged().catch(() => {});
@@ -5071,7 +5289,7 @@ function stopServer() {
   });
 }
 
-module.exports = { startServer, stopServer, PORT, getServerToken };
+module.exports = { startServer, stopServer, PORT, getServerToken, LAN_ENABLED };
 
 if (require.main === module) {
   startServer();

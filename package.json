@@ -7,6 +7,13 @@
   },
   "scripts": {
     "start": "electron .",
+    "mobile": "electron . --mobile",
+    "mobile:lan": "electron . --mobile --lan",
+    "mobile:dev": "node mobile/dev-server.js",
+    "mobile:web": "node mobile/build-web.js",
+    "mobile:sync": "npm run mobile:web && cap sync",
+    "mobile:android": "npm run mobile:sync && cap open android",
+    "mobile:ios": "npm run mobile:sync && cap open ios",
     "test": "node --test",
     "dist": "electron-builder",
     "release": "npm version patch && git push --follow-tags",
@@ -18,10 +25,14 @@
   "license": "MIT",
   "description": "made for humans, Riff - audio player.",
   "devDependencies": {
+    "@capacitor/cli": "^8.5.3",
     "electron": "^41.7.1",
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/ios": "^8.5.3",
     "cfonts": "^3.3.1",
     "discord-rpc": "^4.0.1",
     "electron-updater": "^6.8.9",

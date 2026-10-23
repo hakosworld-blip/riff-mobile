@@ -1,0 +1,14 @@
+{
+  "appId": "io.github.rootscripts.riff",
+  "appName": "Riff",
+  "webDir": "mobile/.web",
+  "backgroundColor": "#131018",
+  "loggingBehavior": "debug",
+  "android": {
+    "allowMixedContent": true
+  },
+  "ios": {
+    "contentInset": "never",
+    "preferredContentMode": "mobile"
+  }
+}
