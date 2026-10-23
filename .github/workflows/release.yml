@@ -47,3 +47,66 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npx electron-builder ${{ matrix.flag }} --publish always
+
+  android:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install dependencies
+        run: npm ci
+      - name: Build the mobile web bundle and sync it into the native projects
+        run: npm run mobile:sync
+      - name: Install the Android SDK platform
+        run: |
+          set -e
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+      - name: Sign the APK (optional)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -e
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::No Android signing secrets configured — the uploaded APK will be unsigned and will not install on a device."
+            exit 0
+          fi
+          mkdir -p android/keystore
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/keystore/riff-release.jks
+          {
+            printf 'storeFile=keystore/riff-release.jks\n'
+            printf 'storePassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+          } > android/keystore.properties
+      - name: Build the release APK
+        run: ./android/gradlew -p android assembleRelease --no-daemon --stacktrace
+      - name: Upload the APK to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
+            SRC=android/app/build/outputs/apk/release/app-release.apk
+            NAME="riff-mobile-${VERSION}-android.apk"
+          else
+            SRC=android/app/build/outputs/apk/release/app-release-unsigned.apk
+            NAME="riff-mobile-${VERSION}-android-unsigned.apk"
+          fi
+          mkdir -p artifacts
+          cp "$SRC" "artifacts/$NAME"
+          sha256sum "artifacts/$NAME" > "artifacts/$NAME.sha256"
+          gh release upload "$GITHUB_REF_NAME" "artifacts/$NAME" "artifacts/$NAME.sha256" --clobber
