@@ -1,25 +1,307 @@
 name: Release
 
+# Stable releases only: push a version tag (v1.0.0) or run this workflow
+# manually with a version. Ordinary commits to main never publish a release —
+# they are covered by the "Android CI" workflow, which only uploads an artifact.
+
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 1.0.0 (creates tag v1.0.0 on the selected branch)'
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  create-release:
+  # Resolve the version, derive the Android versionCode, and (for a manual run)
+  # create the tag so every later job builds the exact same commit.
+  prepare:
+    name: Resolve version
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      version_code: ${{ steps.resolve.outputs.version_code }}
+      checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Create release if missing
+      - name: Resolve version from the tag or the manual input
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            RAW="$GITHUB_REF_NAME"
+          else
+            RAW="$INPUT_VERSION"
+          fi
+          VERSION="${RAW#v}"
+
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$RAW' is not a semantic version. Use a tag like v1.0.0 (three numbers)."
+            exit 1
+          fi
+
+          IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+          CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+          if [ "$CODE" -lt 1 ] || [ "$CODE" -gt 2100000000 ]; then
+            echo "::error::Version $VERSION produces an invalid Android versionCode ($CODE)."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=refs/tags/v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing Riff $VERSION (tag v$VERSION, Android versionCode $CODE)."
+
+      - name: Create the tag for a manual run
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" > /dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists. Pick a version that has not been released yet."
+            exit 1
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${TAG}" -f sha="${GITHUB_SHA}" > /dev/null
+          echo "Created tag ${TAG} at ${GITHUB_SHA}."
 
-  build:
-    needs: create-release
+  # Build, sign and verify the Android APK. This job uploads an artifact only;
+  # nothing becomes public until the `release` job runs.
+  android:
+    name: Build signed Android APK
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
+
+      - name: Verify the Android project exists
+        run: |
+          set -euo pipefail
+          missing=0
+          for path in \
+            android/settings.gradle \
+            android/build.gradle \
+            android/variables.gradle \
+            android/gradlew \
+            android/app/build.gradle \
+            android/app/src/main/AndroidManifest.xml \
+            capacitor.config.json
+          do
+            if [ ! -e "$path" ]; then
+              echo "::error::Missing required Android build file: $path"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::This tag does not contain a buildable Android project, so no APK was produced."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci
+
+      - name: Run the test suite
+        run: npm test
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install the Android SDK platform and build tools
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::Android cmdline-tools are not available at $SDKMANAGER"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Build the mobile web bundle and sync it
+        run: npm run mobile:sync
+
+      - name: Configure release signing from repository secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${ANDROID_KEYSTORE_BASE64:-}" ] || missing="$missing ANDROID_KEYSTORE_BASE64"
+          [ -n "${ANDROID_KEYSTORE_PASSWORD:-}" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -n "${ANDROID_KEY_ALIAS:-}" ] || missing="$missing ANDROID_KEY_ALIAS"
+          [ -n "${ANDROID_KEY_PASSWORD:-}" ] || missing="$missing ANDROID_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing signing secrets:$missing"
+            {
+              echo "### Release signing is not configured"
+              echo
+              echo "Add these repository secrets under Settings -> Secrets and variables -> Actions:"
+              echo "- ANDROID_KEYSTORE_BASE64"
+              echo "- ANDROID_KEYSTORE_PASSWORD"
+              echo "- ANDROID_KEY_ALIAS"
+              echo "- ANDROID_KEY_PASSWORD"
+              echo
+              echo "No APK was published, because an unsigned APK cannot be installed."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          mkdir -p android/keystore
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/keystore/riff-release.jks
+          {
+            printf 'storeFile=keystore/riff-release.jks\n'
+            printf 'storePassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+          } > android/keystore.properties
+
+          # Validate the keystore and passwords before spending time on the build.
+          # Output is suppressed so no credential can reach the log.
+          if ! command -v keytool > /dev/null 2>&1; then
+            echo "::error::keytool is not on PATH — the JDK setup step did not run."
+            exit 1
+          fi
+          if ! keytool -list -keystore android/keystore/riff-release.jks \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" > /dev/null 2>&1; then
+            echo "::error::The keystore, store password or key alias is wrong. Check the signing secrets."
+            exit 1
+          fi
+          echo "Keystore loaded and unlocked."
+
+      - name: Build the release APK
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          ./android/gradlew -p android assembleRelease --no-daemon --stacktrace \
+            -PriffVersionName="$VERSION" \
+            -PriffVersionCode="$VERSION_CODE"
+
+      # Emulator-free checks: package id, version, signing schemes, certificate.
+      - name: Verify the APK is signed and correctly versioned
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$APK" ]; then
+            echo "::error::Gradle finished without producing $APK"
+            exit 1
+          fi
+
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          BADGING=$("$AAPT2" dump badging "$APK")
+
+          echo "$BADGING" | grep -q "package: name='io.github.rootscripts.riff'" || {
+            echo "::error::Unexpected package id — the APK would not update existing installs."
+            exit 1
+          }
+          echo "$BADGING" | grep -q "versionName='$VERSION'" || {
+            echo "::error::APK versionName does not match $VERSION"
+            exit 1
+          }
+          echo "$BADGING" | grep -q "versionCode='$VERSION_CODE'" || {
+            echo "::error::APK versionCode does not match $VERSION_CODE"
+            exit 1
+          }
+
+          if ! "$APKSIGNER" verify --verbose --print-certs "$APK" > /tmp/apksigner.txt 2>&1; then
+            cat /tmp/apksigner.txt
+            echo "::error::apksigner rejected the APK."
+            exit 1
+          fi
+          cat /tmp/apksigner.txt
+
+          for scheme in v2 v3; do
+            grep -q "Verified using ${scheme} scheme" /tmp/apksigner.txt || {
+              echo "::error::The APK is missing the required ${scheme} signature scheme."
+              exit 1
+            }
+            grep -q "Verified using ${scheme} scheme .*: true" /tmp/apksigner.txt || {
+              echo "::error::The ${scheme} signature did not verify."
+              exit 1
+            }
+          done
+
+          CERT_DIGEST=$(grep -m1 "certificate SHA-256 digest:" /tmp/apksigner.txt | sed 's/.*digest: //')
+          sha256sum "$APK"
+
+          {
+            echo "### Signed APK ready"
+            echo
+            echo "- Package: io.github.rootscripts.riff"
+            echo "- Version: $VERSION (versionCode $VERSION_CODE)"
+            echo "- Size: $(du -h "$APK" | cut -f1)"
+            echo "- APK SHA-256: $(sha256sum "$APK" | cut -d' ' -f1)"
+            echo "- Signer certificate SHA-256: ${CERT_DIGEST:-unknown}"
+            echo "- Signature schemes: v2 and v3 verified by apksigner"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stage the release asset
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          NAME="riff-${VERSION}-android.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "release-assets/$NAME"
+          (cd release-assets && sha256sum "$NAME" > "$NAME.sha256")
+          ls -l release-assets
+
+      - name: Upload the verified APK as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: riff-android-release
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # Desktop builds are unchanged in behaviour: they still run for every release
+  # tag, they just no longer publish on their own. The `release` job attaches
+  # everything at once, after the APK has been verified.
+  desktop:
+    name: Build desktop (${{ matrix.os }})
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -31,82 +313,139 @@ jobs:
           - os: macos-latest
             flag: --mac dmg zip --x64 --arm64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out the release tag
+        uses: actions/checkout@v4
         with:
-          node-version: 22
-          cache: npm
-      - name: Set version from tag
-        shell: bash
-        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
-      - run: npm ci
-      - name: Build and upload to the release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npx electron-builder ${{ matrix.flag }} --publish always
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
 
-  android:
-    needs: create-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - uses: actions/setup-java@v4
+
+      - name: Set the version from the tag
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - run: npm ci
+
+      - name: Build the desktop app
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder ${{ matrix.flag }} --publish never
+
+      - name: Upload the desktop builds
+        uses: actions/upload-artifact@v4
         with:
-          distribution: temurin
-          java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Install dependencies
-        run: npm ci
-      - name: Build the mobile web bundle and sync it into the native projects
-        run: npm run mobile:sync
-      - name: Install the Android SDK platform
-        run: |
-          set -e
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
-      - name: Sign the APK (optional)
+          name: desktop-${{ matrix.os }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/*.AppImage
+            dist/*.AppImage.blockmap
+            dist/*.dmg
+            dist/*.zip
+            dist/*.zip.blockmap
+            dist/latest*.yml
+
+  release:
+    name: Publish the GitHub release
+    needs: [prepare, android, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository for the changelog
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
+          fetch-depth: 0
+
+      - name: Download every verified artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate the release notes
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -e
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "::warning::No Android signing secrets configured — the uploaded APK will be unsigned and will not install on a device."
-            exit 0
-          fi
-          mkdir -p android/keystore
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/keystore/riff-release.jks
-          {
-            printf 'storeFile=keystore/riff-release.jks\n'
-            printf 'storePassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD"
-            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
-            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
-          } > android/keystore.properties
-      - name: Build the release APK
-        run: ./android/gradlew -p android assembleRelease --no-daemon --stacktrace
-      - name: Upload the APK to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
-            SRC=android/app/build/outputs/apk/release/app-release.apk
-            NAME="riff-mobile-${VERSION}-android.apk"
+          PREVIOUS=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+          if [ -n "$PREVIOUS" ]; then
+            RANGE="${PREVIOUS}..${TAG}"
+            CHANGES=$(git log --no-merges --pretty=format:'- %s' "$RANGE")
+            RANGE_LABEL="since ${PREVIOUS}"
           else
-            SRC=android/app/build/outputs/apk/release/app-release-unsigned.apk
-            NAME="riff-mobile-${VERSION}-android-unsigned.apk"
+            CHANGES="- First tagged release of the Riff Android app."
+            RANGE_LABEL="first release"
           fi
-          mkdir -p artifacts
-          cp "$SRC" "artifacts/$NAME"
-          sha256sum "artifacts/$NAME" > "artifacts/$NAME.sha256"
-          gh release upload "$GITHUB_REF_NAME" "artifacts/$NAME" "artifacts/$NAME.sha256" --clobber
+          if [ -z "$CHANGES" ]; then CHANGES="- No changes recorded."; fi
+
+          cat > NOTES.md <<EOF
+          ## Riff ${VERSION} (${RANGE_LABEL})
+
+          Android app: \`riff-${VERSION}-android.apk\` — package \`io.github.rootscripts.riff\`, version ${VERSION}.
+          Signed with the project's release key; updates install over earlier Riff releases from this repository.
+
+          ### Install on Android (7.0 / API 24 and newer)
+
+          1. Download \`riff-${VERSION}-android.apk\` on the phone.
+          2. Open it and allow installing from that app when Android asks (or use \`adb install riff-${VERSION}-android.apk\`).
+          3. Start Riff on your computer with LAN sharing: \`npm run mobile:lan\`.
+          4. Open **Connect to Riff** in the app, then the pairing page printed in the Riff console, and enter the address and code.
+          5. Android 13+ asks for notification permission on first playback — that is what shows the media notification and lock-screen controls.
+
+          The SHA-256 of the APK is in the attached \`.sha256\` file.
+
+          ### Known limitations
+
+          - Audio still plays inside the Android WebView so the EQ and DSP effects keep working. A native media session (foreground service, MediaStyle notification, transport controls) wraps it, so screen-off playback works, but swiping the app away from recents or severe background memory pressure stops playback.
+          - Downloads are saved to the Riff computer's download folder; the phone streams the library rather than copying files onto the device.
+          - Desktop-only features (Discord Rich Presence, plugins, theme editor, auto-update, tray, waveform editor, Spotify sign-in) are not in the mobile app.
+          - The desktop builds are unsigned (no Apple notarisation or Windows code-signing certificate), so macOS and Windows may warn on first launch.
+
+          ### Changes ${RANGE_LABEL}
+
+          ${CHANGES}
+          EOF
+
+          echo "----- notes -----" && cat NOTES.md
+
+      - name: Create the release, or attach assets to an existing one
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          ASSETS=(release-assets/*)
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "::error::No build artifacts were downloaded; refusing to publish an empty release."
+            exit 1
+          fi
+          printf 'Publishing %s\n' "${ASSETS[@]}"
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" \
+              --title "Riff ${VERSION}" \
+              --notes-file NOTES.md \
+              "${ASSETS[@]}"
+          fi
+
+          URL=$(gh release view "$TAG" --json url --jq .url)
+          echo "Release published: $URL"
+          echo "### Release published" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"

@@ -145,6 +145,16 @@ macOS support is currently experimental and compiled via continuous integration.
 
 macOS application data and local indexes are stored in `~/Library/Application Support/Riff`.
 
+### Android
+
+The native Android app (Android 7.0 / API 24 and newer) is published on this repository's [Releases page](../../releases) as `riff-<version>-android.apk`, alongside the desktop builds.
+
+1. Download the APK on the phone and open it, allowing installation from that app when Android asks.
+2. Start Riff on your computer with LAN sharing (`npm run mobile:lan`) and open the pairing page it prints.
+3. In the app, choose **Connect to Riff** and enter the address and pairing code.
+
+The APK is signed with a stable release key, so newer versions install over older ones. Builds are produced by GitHub Actions from `v*` tags; see [mobile/README.md](mobile/README.md#building-and-releasing-the-apk) for the pipeline, signing secrets and versioning rules.
+
 ## Build from source
 
 Requires Node.js 18 or newer and npm.

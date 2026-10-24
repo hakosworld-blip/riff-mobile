@@ -132,9 +132,36 @@ LAN sharing is opt-in and scoped:
   your own computer over plain HTTP. Neither target exposes Riff to the
   internet.
 
-### Release APK
+### Building and releasing the APK
 
-The Android release build is signed with a locally generated key:
+Two GitHub Actions workflows drive the Android app; no local Android toolchain
+is needed to ship a build.
+
+| Workflow | Trigger | What it does |
+| --- | --- | --- |
+| `.github/workflows/android.yml` | push to `main`, pull requests, manual dispatch | runs the Node test suite, syncs the web bundle, builds a **debug** APK and uploads it as a workflow artifact (never a release) |
+| `.github/workflows/release.yml` | push of a `vX.Y.Z` tag, or manual dispatch with a version | tests, builds and **signs** the release APK, verifies the signature, then publishes the APK plus the desktop builds as a GitHub Release |
+
+The release pipeline fails instead of shipping something broken: it stops if the
+`android/` project is missing, if the signing secrets are absent, if `apksigner`
+rejects the APK, or if the APK's package id or version does not match the tag.
+
+**Versioning.** `applicationId` stays `io.github.rootscripts.riff` forever, so a
+new APK installs over the old one. `versionName` comes from the tag
+(`v1.2.3` → `1.2.3`) and `versionCode` is derived from it
+(`major * 10000 + minor * 100 + patch`), which Android requires to increase for
+every update. Pass them manually for a local build:
+
+```bash
+npm run mobile:sync
+./android/gradlew -p android assembleRelease \
+  -PriffVersionName=1.2.3 -PriffVersionCode=10203
+# android/app/build/outputs/apk/release/app-release.apk
+```
+
+Without `-P` flags a local build reports `1.0.0` / versionCode `1`.
+
+**Signing.** The release APK is signed with a dedicated key. Locally it lives in:
 
 | File | Purpose |
 | --- | --- |
@@ -142,24 +169,33 @@ The Android release build is signed with a locally generated key:
 | `android/keystore.properties` | store/key passwords and alias (mode `0600`) |
 | `android/app/build.gradle` | reads that file; enables APK signature schemes v2 + v3 |
 
-Both secrets are gitignored. **Back them up somewhere safe**: Android identifies
-an app by its signing key, so losing it means you can never update an installed
-build or upload an update to Google Play. To build:
+Both files are gitignored. CI takes the same key from repository secrets:
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 riff-release.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore (store) password |
+| `ANDROID_KEY_ALIAS` | `riff` |
+| `ANDROID_KEY_PASSWORD` | key password |
+
+Set them in **Settings → Secrets and variables → Actions → New repository
+secret**. Never commit the keystore or paste it into a workflow file.
+
+**Back the keystore up somewhere safe.** Android identifies an app by its signing
+key; without the original key you cannot update an installed copy — a different
+key requires uninstalling first. To publish a new version, push a new tag:
 
 ```bash
-cd android
-./gradlew assembleRelease
-# android/app/build/outputs/apk/release/app-release.apk
+git tag -a v1.1.0 -m "Riff 1.1.0"
+git push origin v1.1.0
 ```
 
-The signed artifact used for this release is
-`artifacts/riff-mobile-1.0-release.apk` (SHA-256 in the adjacent `.sha256`),
-with package `io.github.rootscripts.riff`, version `1.0`, minSdk 24, targetSdk
-36. Install it with `adb install artifacts/riff-mobile-1.0-release.apk`, or copy
-it to the phone and allow installing from that app. Android 13+ asks for
-notification permission the first time playback starts, which is what shows the
-lock-screen/notification controls. This APK is ready to upload to Google Play,
-but publishing still needs a Play Console account and listing.
+Or, without a terminal, open **Actions → Release → Run workflow** and enter
+`1.1.0`; the workflow creates the tag itself. APKs are attached to the release as
+`riff-<version>-android.apk` with a `.sha256` alongside. Install one with
+`adb install riff-1.1.0-android.apk`, or download it on the phone and allow
+installing from that app. Android 13+ asks for notification permission the first
+time playback starts, which is what shows the lock-screen/notification controls.
 
 ### Known native limitations
 

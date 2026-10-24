@@ -33,6 +33,9 @@ test('Spotify login persists securely, refreshes, restores, and rejects partial 
   const oldGet = https.get;
   const safeStorage = {
     isEncryptionAvailable: () => true,
+    // Linux asks which backend is in use; report a real keyring rather than
+    // ''basic_text'' so the test exercises the encrypted path on every OS.
+    getSelectedStorageBackend: () => 'gnome_libsecret',
     encryptString: value => Buffer.from(`sealed:${Buffer.from(value).toString('base64')}`),
     decryptString: value => Buffer.from(value.toString().slice(7), 'base64').toString()
   };

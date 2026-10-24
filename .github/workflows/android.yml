@@ -1,0 +1,161 @@
+name: Android CI
+
+# Continuous integration for the native Android app. This never publishes a
+# release: it builds, tests and uploads a debug APK for download. Publishing is
+# handled by release.yml, which runs only on v* tags (or a manual dispatch of
+# that workflow).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Fail loudly and early when the checkout has no Android project, instead
+      # of letting Gradle (or a stub) produce something that is not the app.
+      - name: Verify the Android project exists
+        run: |
+          set -euo pipefail
+          missing=0
+          for path in \
+            android/settings.gradle \
+            android/build.gradle \
+            android/variables.gradle \
+            android/gradlew \
+            android/app/build.gradle \
+            android/app/src/main/AndroidManifest.xml \
+            capacitor.config.json
+          do
+            if [ ! -e "$path" ]; then
+              echo "::error::Missing required Android build file: $path"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            {
+              echo "### Android project not found"
+              echo
+              echo "This repository does not contain a buildable Android project, so no APK was produced."
+              echo "Expected a Capacitor/Gradle project under \`android/\` (manifest, settings.gradle, gradlew)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          if ! grep -q 'io.github.rootscripts.riff' android/app/build.gradle; then
+            echo "::error::android/app/build.gradle does not declare the Riff applicationId."
+            exit 1
+          fi
+
+          echo "Android project found:" && ls android
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci
+
+      - name: Run the test suite
+        run: npm test
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Accept Android SDK licenses and install platform 36
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::Android cmdline-tools are not available at $SDKMANAGER"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Build the mobile web bundle and sync it into the native project
+        run: npm run mobile:sync
+
+      - name: Confirm the web assets were synced
+        run: |
+          set -euo pipefail
+          if [ ! -f android/app/src/main/assets/public/index.html ]; then
+            echo "::error::Capacitor did not copy the web bundle into android/app/src/main/assets/public."
+            exit 1
+          fi
+          echo "Synced bundle:" && du -sh android/app/src/main/assets/public
+
+      - name: Build the debug APK
+        run: |
+          set -euo pipefail
+          VERSION_NAME="1.0.0-ci.${GITHUB_RUN_NUMBER}"
+          VERSION_CODE="${GITHUB_RUN_NUMBER}"
+          ./android/gradlew -p android assembleDebug --no-daemon --stacktrace \
+            -PriffVersionName="$VERSION_NAME" \
+            -PriffVersionCode="$VERSION_CODE"
+
+      - name: Inspect the APK
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          if [ ! -f "$APK" ]; then
+            echo "::error::Gradle finished without producing $APK"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$APK")
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "::error::APK is only $SIZE bytes — that is not the Riff app."
+            exit 1
+          fi
+          AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/36.0.0/aapt2)
+          BADGING=$("$AAPT2" dump badging "$APK")
+          echo "$BADGING" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^application-label:" || true
+          echo "$BADGING" | grep -q "package: name='io.github.rootscripts.riff'" || {
+            echo "::error::APK package name is not io.github.rootscripts.riff"
+            exit 1
+          }
+          sha256sum "$APK"
+          {
+            echo "### Debug APK built"
+            echo
+            echo "- Size: $(du -h "$APK" | cut -f1)"
+            echo "- SHA-256: $(sha256sum "$APK" | cut -d' ' -f1)"
+            echo "- Signed with the Android debug key (not for distribution)."
+            echo
+            echo '```'
+            echo "$BADGING" | grep -E "^package:|^sdkVersion|^targetSdkVersion"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: riff-android-debug-${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

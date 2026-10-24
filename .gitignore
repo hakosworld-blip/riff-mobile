@@ -27,4 +27,6 @@ ios/App/App.xcworkspace/xcuserdata/
 # Android release signing (local secrets — never commit)
 android/keystore/
 android/keystore.properties
-artifacts/*.apk
+
+# Local build output and signing material
+artifacts/
